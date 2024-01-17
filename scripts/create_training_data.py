@@ -1,12 +1,27 @@
-from PIL import Image
-import requests
-from transformers import CLIPProcessor, CLIPModel
+import numpy as np
+import torch
 
-model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
-processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
-url = "http://images.cocodataset.org/val2017/000000039769.jpg"
-image = Image.open(requests.get(url, stream=True).raw)
-inputs = processor(text=["a photo of a cat", "a photo of a dog"], images=image, return_tensors="pt", padding=True)
-outputs = model(**inputs)
-logits_per_image = outputs.logits_per_image  # this is the image-text similarity score
-probs = logits_per_image.softmax(dim=1)  # we can take the softmax to get the label probabilities
+from pathlib import Path
+from PIL import Image
+from tqdm import tqdm
+from transformers import CLIPImageProcessor, CLIPVisionModel
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+VISION_FEATURE_LAYER = -2
+
+img_folder = Path("E:/coco/train2017")
+labels_folder = img_folder / "clip_soft_labels"
+labels_folder.mkdir(exist_ok=True, parents=True)
+
+model = CLIPVisionModel.from_pretrained("openai/clip-vit-large-patch14").to(device)
+processor = CLIPImageProcessor.from_pretrained("openai/clip-vit-large-patch14")
+
+for img_path in tqdm(img_folder.glob("*.jpg")):
+    image = Image.open(img_path)
+    inputs = processor(images=image, return_tensors="pt", padding=True)
+    inputs["pixel_values"] = inputs.pop("pixel_values").to(device)
+    outputs = model(**inputs, output_hidden_states=True)
+    target = outputs.hidden_states[VISION_FEATURE_LAYER].cpu().detach().numpy()
+    out_filename = f"{img_path.stem}.npy"
+    np.save(labels_folder / out_filename, target)
