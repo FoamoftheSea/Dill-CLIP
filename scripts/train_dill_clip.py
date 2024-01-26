@@ -10,10 +10,10 @@ from torch.utils.data import Dataset
 from transformers import (
     Trainer,
     TrainingArguments,
-    DeformableDetrModel,
-    DeformableDetrConfig,
     PvtV2Config,
-    AutoImageProcessor,
+    DeformableDetrImageProcessor,
+    DillCLIPVisionConfig,
+    DillCLIPVisionModelForRegression,
 )
 from transformers.data.data_collator import InputDataClass
 from transformers.training_args import OptimizerNames
@@ -22,7 +22,7 @@ from transformers.utils import logging
 logger = logging.get_logger(__name__)
 logger.setLevel(logging.DEBUG)
 
-image_processor = AutoImageProcessor.from_pretrained("sensetime/deformable-detr")
+image_processor = DeformableDetrImageProcessor.from_pretrained("sensetime/deformable-detr")
 
 
 def compute_metrics(eval_pred) -> dict:
@@ -48,9 +48,11 @@ def dill_clip_collator(features: List[InputDataClass]) -> Dict[str, Any]:
 
     for k, v in first.items():
         if k == "labels":
-            batch[k] = [f[k] for f in features]
+            batch[k] = [torch.tensor(f[k]) for f in features]
         elif k == "pixel_values":
-            batch[k] = image_processor([f[k] for f in features])
+            processed = image_processor([f[k] for f in features])
+            batch["pixel_values"] = torch.tensor(processed.data["pixel_values"])
+            batch["pixel_mask"] = torch.tensor(processed.data["pixel_mask"])
 
     return batch
 
@@ -61,22 +63,30 @@ class DillCLIPDataset(Dataset):
         self.split = split
         self.data_root = Path(data_root) / f"{split}2017"
         self.num_workers = num_workers
+        self.frames = self._get_frames()
 
-    def _get_paths(self):
-        self.img_paths = list(self.data_root.glob("*.jpg"))
-        self.target_paths = [
-            self.data_root / "clip_soft_labels" / f"{img_path.stem}.npy" for img_path in self.img_paths
+
+    def _get_frames(self):
+        img_paths = list(self.data_root.glob("*.jpg"))
+        target_paths = [
+            self.data_root / "clip_soft_labels" / f"{img_path.stem}.npy" for img_path in img_paths
         ]
 
+        return list(zip(img_paths, target_paths))
+
+    def __len__(self):
+        return len(self.frames)
+
     def __getitem__(self, idx: int):
-        img = Image.open(self.img_paths[idx])
-        target = np.load(self.target_paths[idx])
+        img_path, target_path = self.frames[idx]
+        img = Image.open(img_path)
+        target = np.load(target_path)
 
         return {"pixel_values": img, "labels": target}
 
 
 def main(args):
-    config = DeformableDetrConfig(
+    config = DillCLIPVisionConfig(
         use_timm_backbone=False,
         backbone_config=PvtV2Config.from_pretrained("FoamoftheSea/pvt_v2_b4"),
         num_queries=257,
@@ -107,7 +117,7 @@ def main(args):
         disable_custom_kernels=False,
     )
 
-    model = DeformableDetrModel.from_config(config)
+    model = DillCLIPVisionModelForRegression(config)
 
     training_args = TrainingArguments(
         output_dir=args.output_dir,
@@ -118,6 +128,8 @@ def main(args):
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         gradient_checkpointing=args.gradient_checkpointing,
         save_total_limit=args.save_total_limit,
+        evaluation_strategy="steps",
+        save_strategy="steps",
         save_steps=args.save_steps,
         eval_steps=args.eval_steps,
         logging_steps=1,
