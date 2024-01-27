@@ -5,8 +5,7 @@ from typing import Mapping, List, Dict, Any
 import numpy as np
 import torch
 import wandb
-from PIL import Image
-from torch.utils.data import Dataset
+from dill_clip.dataset.dill_clip_dataset import DillCLIPTrainDataset, DillCLIPValDataset
 from transformers import (
     CLIPVisionModelWithProjection,
     Trainer,
@@ -121,55 +120,6 @@ def dill_clip_collator(features: List[InputDataClass]) -> Dict[str, Any]:
             batch["targets"] = torch.tensor(np.array([f[k] for f in features]))
 
     return batch
-
-
-class DillCLIPValDataset(Dataset):
-    def __init__(self, data_root: str):
-        self.data_root = Path(data_root) / "val" if not data_root.endswith("val") else Path(data_root)
-        self.frames = self._get_frames()
-        with open(self.data_root / "ILSVRC2012_validation_ground_truth.txt", "r") as f:
-            targets = f.read().splitlines()
-            self.targets = {i + 1: int(t) for i, t in enumerate(targets)}
-
-    def _get_frames(self):
-        return sorted(list(self.data_root.glob("*.JPEG")), key=lambda x: int(x.stem.split("_")[-1]))
-
-    def __len__(self):
-        return (len(self.frames))
-
-    def __getitem__(self, idx):
-        img_path = self.frames[idx]
-        lbl_path = img_path.parent / "clip_soft_labels" / f"{img_path.stem}.npy"
-        img = Image.open(img_path)
-        lbl = np.load(lbl_path).squeeze()
-        target = self.targets[int(img_path.stem.split("_")[-1])]
-
-        return {"pixel_values": img, "labels": lbl, "targets": target}
-
-
-class DillCLIPTrainDataset(Dataset):
-
-    def __init__(self, data_directory: str):
-        self.data_directory = data_directory
-        self.frames = self._get_frames()
-
-    def _get_frames(self):
-        # Search for images based on labels to prevent loading issues
-        with open(self.data_directory, "r") as f:
-            frames = f.read().splitlines()
-
-        return frames
-
-    def __len__(self):
-        return len(self.frames)
-
-    def __getitem__(self, idx: int):
-        lbl_path = self.frames[idx]
-        img_path = lbl_path.replace("clip_soft_labels", "images").replace(".npy", ".jpg")
-        img = Image.open(img_path)
-        lbl = np.load(lbl_path)
-
-        return {"pixel_values": img, "labels": lbl}
 
 
 def main(args):
