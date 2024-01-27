@@ -112,7 +112,7 @@ def dill_clip_collator(features: List[InputDataClass]) -> Dict[str, Any]:
         if k == "labels":
             batch[k] = [torch.tensor(f[k]) for f in features]
         elif k == "pixel_values":
-            processed = image_processor([f[k].convert("RGB") for f in features], return_tensors="pt")
+            processed = image_processor([f[k] for f in features], return_tensors="pt")
             pixel_values = processed.data["pixel_values"]
             batch["pixel_values"] = pixel_values
             batch["pixel_mask"] = processed.data["pixel_mask"]

@@ -22,7 +22,7 @@ class DillCLIPValDataset(Dataset):
     def __getitem__(self, idx):
         img_path = self.frames[idx]
         lbl_path = img_path.parent / "clip_soft_labels" / f"{img_path.stem}.npy"
-        img = np.array(Image.open(img_path))
+        img = np.array(Image.open(img_path).convert("RGB"))
         lbl = np.load(lbl_path).squeeze()
         target = self.targets[int(img_path.stem.split("_")[-1])]
 
@@ -48,7 +48,7 @@ class DillCLIPTrainDataset(Dataset):
     def __getitem__(self, idx: int):
         lbl_path = self.frames[idx]
         img_path = lbl_path.replace("clip_soft_labels", "images").replace(".npy", ".jpg")
-        img = np.array(Image.open(img_path))
+        img = np.array(Image.open(img_path).convert("RGB"))
         lbl = np.load(lbl_path)
 
         return {"pixel_values": img, "labels": lbl}
