@@ -8,6 +8,7 @@ import wandb
 from PIL import Image
 from torch.utils.data import Dataset
 from transformers import (
+    CLIPVisionModelWithProjection,
     Trainer,
     TrainingArguments,
     PvtV2Config,
@@ -23,20 +24,80 @@ logger = logging.get_logger(__name__)
 logger.setLevel(logging.DEBUG)
 
 image_processor = DeformableDetrImageProcessor.from_pretrained("sensetime/deformable-detr")
+clip_vision_model = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-large-patch14").to("cuda:0")
+zeroshot_weights = torch.tensor(np.load("C:/Users/Nate/Dill-CLIP/scripts/zeroshot_weights.npy").T).to("cuda:0")
 
 
-def compute_metrics(eval_pred) -> dict:
+def accuracy(output, target, topk=(1,)):
+    pred = output.topk(max(topk), 1, True, True)[1].t()
+    correct = pred.eq(target.view(1, -1).expand_as(pred))
+    return [float(correct[:k].reshape(-1).float().sum(0, keepdim=True).cpu().numpy()) for k in topk]
+
+
+def calc_accuracy(pooled, target):
+    with torch.no_grad():
+        # predict
+        image_features = clip_vision_model.visual_projection(pooled)
+        image_features /= image_features.norm(dim=-1, keepdim=True)
+        logits = 100. * image_features @ zeroshot_weights
+
+        # measure accuracy
+        acc1, acc5 = accuracy(logits, target, topk=(1, 5))
+
+    return acc1, acc5
+
+
+def search_frames(path: Path, ext: str):
+    return set(path.glob(f".{ext}"))
+
+
+class DillCLIPEvalMetric:
+
+    def __init__(self):
+        self.reset_metric()
+
+    def reset_metric(self):
+        self.batch_mse = []
+        self.batch_mae = []
+        self.batch_top1_acc = []
+        self.batch_top5_acc = []
+
+    def update(self, pred, pooled, labels, target):
+        mse_loss = torch.nn.MSELoss()
+        mae_loss = torch.nn.L1Loss()
+        labels = torch.stack(labels)
+        self.batch_mse.append(mse_loss(pred, labels).detach().cpu().numpy())
+        self.batch_mae.append(mae_loss(pred, labels).detach().cpu().numpy())
+
+        top1, top5 = calc_accuracy(pooled, target)
+        self.batch_top1_acc.append(top1)
+        self.batch_top5_acc.append(top5)
+
+    def calculate(self):
+        output = {
+            "mse": np.mean(self.batch_mse),
+            "mae": np.mean(self.batch_mae),
+            "top1_acc": np.mean(self.batch_top1_acc),
+            "top5_acc": np.mean(self.batch_top5_acc),
+        }
+        self.reset_metric()
+        return output
+
+
+dill_metric = DillCLIPEvalMetric()
+
+
+def compute_metrics(eval_pred, compute_result=True) -> dict:
 
     with torch.no_grad():
-        predictions, labels = eval_pred
+        outputs, labels = eval_pred
+        target = outputs[0]
+        pred = outputs[1]
+        pooled = outputs[2]
+        dill_metric.update(pred, pooled, labels, target)
 
-        mse_metric = torch.nn.MSELoss()
-        mae_metric = torch.nn.L1Loss()
-
-        mse = mse_metric(predictions, labels)
-        mae = mae_metric(predictions, labels)
-
-        return {"MSE": mse, "MAE": mae}
+    if compute_result:
+        return dill_metric.calculate()
 
 
 def dill_clip_collator(features: List[InputDataClass]) -> Dict[str, Any]:
@@ -50,45 +111,80 @@ def dill_clip_collator(features: List[InputDataClass]) -> Dict[str, Any]:
         if k == "labels":
             batch[k] = [torch.tensor(f[k]) for f in features]
         elif k == "pixel_values":
-            processed = image_processor([f[k] for f in features])
-            batch["pixel_values"] = torch.tensor(processed.data["pixel_values"])
-            batch["pixel_mask"] = torch.tensor(processed.data["pixel_mask"])
+            processed = image_processor([f[k].convert("RGB") for f in features], return_tensors="pt")
+            pixel_values = processed.data["pixel_values"]
+            batch["pixel_values"] = pixel_values
+            batch["pixel_mask"] = processed.data["pixel_mask"]
+        elif k == "targets":
+            batch["targets"] = torch.tensor(np.array([f[k] for f in features]))
 
     return batch
 
 
-class DillCLIPDataset(Dataset):
-
-    def __init__(self, data_root: str, split: str = "train", num_workers: int = 1):
-        self.split = split
-        self.data_root = Path(data_root) / f"{split}2017"
-        self.num_workers = num_workers
+class DillCLIPValDataset(Dataset):
+    def __init__(self, data_root: str):
+        self.data_root = Path(data_root) / "val" if not data_root.endswith("val") else Path(data_root)
         self.frames = self._get_frames()
-
+        with open(self.data_root / "ILSVRC2012_validation_ground_truth.txt", "r") as f:
+            targets = f.read().splitlines()
+            self.targets = {i + 1: int(t) for i, t in enumerate(targets)}
 
     def _get_frames(self):
-        img_paths = list(self.data_root.glob("*.jpg"))
-        target_paths = [
-            self.data_root / "clip_soft_labels" / f"{img_path.stem}.npy" for img_path in img_paths
-        ]
+        return sorted(list(self.data_root.glob("*.JPEG")), key=lambda x: int(x.stem.split("_")[-1]))
 
-        return list(zip(img_paths, target_paths))
+    def __len__(self):
+        return (len(self.frames))
+
+    def __getitem__(self, idx):
+        img_path = self.frames[idx]
+        lbl_path = img_path.parent / "clip_soft_labels" / f"{img_path.stem}.npy"
+        img = Image.open(img_path)
+        lbl = np.load(lbl_path).squeeze()
+        target = self.targets[int(img_path.stem.split("_")[-1])]
+
+        return {"pixel_values": img, "labels": lbl, "targets": target}
+
+
+class DillCLIPTrainDataset(Dataset):
+
+    def __init__(self, data_directory: str):
+        self.data_directory = data_directory
+        self.frames = self._get_frames()
+
+    def _get_frames(self):
+        # Search for images based on labels to prevent loading issues
+        with open(self.data_directory, "r") as f:
+            frames = f.read().splitlines()
+
+        return frames
 
     def __len__(self):
         return len(self.frames)
 
     def __getitem__(self, idx: int):
-        img_path, target_path = self.frames[idx]
+        lbl_path = self.frames[idx]
+        img_path = lbl_path.replace("clip_soft_labels", "images").replace(".npy", ".jpg")
         img = Image.open(img_path)
-        target = np.load(target_path)
+        lbl = np.load(lbl_path)
 
-        return {"pixel_values": img, "labels": target}
+        return {"pixel_values": img, "labels": lbl}
 
 
 def main(args):
     config = DillCLIPVisionConfig(
         use_timm_backbone=False,
-        backbone_config=PvtV2Config.from_pretrained("FoamoftheSea/pvt_v2_b4"),
+        backbone_config=PvtV2Config(
+            depths=[2, 2, 2, 2],
+            hidden_sizes=[32, 64, 160, 256],
+            # hidden_sizes=[64, 128, 320, 512],
+            mlp_ratios=[8, 8, 4, 4],
+            num_attention_heads=[1, 2, 5, 8],
+            num_encoder_blocks=4,
+            patch_sizes=[7, 3, 3, 3],
+            sr_ratios=[8, 4, 2, 1],
+            strides=[4, 2, 2, 2],
+            drop_path_rate=0.1,
+        ),
         num_queries=257,
         max_position_embeddings=1024,
         encoder_layers=3,
@@ -119,6 +215,17 @@ def main(args):
 
     model = DillCLIPVisionModelForRegression(config)
 
+    train_dataset = DillCLIPTrainDataset(data_directory="C:/Users/Nate/Dill-CLIP/train_directory.txt")
+    val_dataset = DillCLIPValDataset(data_root="D:/ILSVRC/Data/CLS-LOC")
+
+    optimizer = torch.optim.AdamW(
+        params=model.parameters(),
+        lr=args.learning_rate,
+    )
+    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer=optimizer,
+        T_max=(len(train_dataset)//(args.gradient_accumulation_steps*args.batch_size))*args.epochs,
+    )
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         learning_rate=args.learning_rate,
@@ -127,6 +234,7 @@ def main(args):
         per_device_eval_batch_size=args.eval_batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         gradient_checkpointing=args.gradient_checkpointing,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
         save_total_limit=args.save_total_limit,
         evaluation_strategy="steps",
         save_strategy="steps",
@@ -140,14 +248,8 @@ def main(args):
         tf32=args.use_tf32,
         optim=OptimizerNames.ADAMW_8BIT if args.use_adam8bit else OptimizerNames.ADAMW_TORCH,
         dataloader_pin_memory=False if args.workers > 0 else True,
-        # lr_scheduler_type=SchedulerType.COSINE,
-        # push_to_hub=True,
-        # hub_model_id=hub_model_id,
-        # hub_strategy="end",
+        batch_eval_metrics=True,
     )
-
-    train_dataset = DillCLIPDataset(data_root=args.data_root, split="train")
-    val_dataset = DillCLIPDataset(data_root=args.data_root, split="val")
 
     trainer = Trainer(
         model=model,
@@ -156,6 +258,7 @@ def main(args):
         eval_dataset=val_dataset,
         compute_metrics=compute_metrics,
         data_collator=dill_clip_collator,
+        optimizers=(optimizer, lr_scheduler),
     )
     if args.eval_only:
         trainer.evaluate()
@@ -165,11 +268,11 @@ def main(args):
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("-o", "--output_dir", type=str, default="./segformer_output", help="Output dir to store results.")
-    parser.add_argument("-d", "--data-root", type=str, default="E:/shift/", help="Path to SHIFT dataset.")
+    parser.add_argument("-o", "--output_dir", type=str, default="./dill_clip_b0_output", help="Output dir to store results.")
+    parser.add_argument("-d", "--data-root", nargs="*", type=str, default=["D:/", "E:/"], help="Folder containing dataset.")
     parser.add_argument("-w", "--workers", type=int, default=0, help="Number of data loader workers.")
-    parser.add_argument("-lr", "--learning-rate", type=float, default=0.00006, help="Initial learning rate for training.")
-    parser.add_argument("-e", "--epochs", type=int, default=5, help="Number of epochs to run training.")
+    parser.add_argument("-lr", "--learning-rate", type=float, default=0.0001, help="Initial learning rate for training.")
+    parser.add_argument("-e", "--epochs", type=int, default=1, help="Number of epochs to run training.")
     parser.add_argument("-bs", "--batch-size", type=int, default=1, help="Train batch size.")
     parser.add_argument("-ebs", "--eval-batch-size", type=int, default=None, help="Eval batch size. Defaults to train batch size.")
     parser.add_argument("-gas", "--gradient-accumulation-steps", type=int, default=2, help="Number of gradient accumulation steps.")
@@ -180,7 +283,7 @@ if __name__ == "__main__":
     parser.add_argument("-s", "--seed", type=int, default=42, help="Random seed for training.")
     parser.add_argument("-tf32", "--use-tf32", action="store_true", default=False, help="Set to True if your setup supports TF32 dtype.")
     parser.add_argument("-bnb", "--use-adam8bit", action="store_true", default=False, help="Use ADAMW_8BIT optimizer (linux only).")
-    parser.add_argument("-c", "--checkpoint", type=str, default=None, help="Path to checpoint to resume training.")
+    parser.add_argument("-c", "--checkpoint", type=str, default=None, help="Path to checkpoint to resume training.")
     parser.add_argument("-rwb", "--resume-wandb", type=str, default=None, help="ID of run to resume")
     parser.add_argument("-eval", "--eval-only", action="store_true", default=False, help="Only run evaluation step.")
     parser.add_argument("-stl", "--save-total-limit", type=int, default=None, help="Maximum number of checkpoints to store at once.")
