@@ -74,11 +74,13 @@ class DillCLIPEvalMetric:
         self.batch_top5_acc.append(top5)
 
     def calculate(self):
+        total_mae = np.mean(self.batch_mae)
         output = {
             "mse": np.mean(self.batch_mse),
-            "mae": np.mean(self.batch_mae),
+            "mae": total_mae,
             "top1_acc": np.mean(self.batch_top1_acc),
             "top5_acc": np.mean(self.batch_top5_acc),
+            "eval_loss": total_mae,
         }
         self.reset_metric()
         return output
