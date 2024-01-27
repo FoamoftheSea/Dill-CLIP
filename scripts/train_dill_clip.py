@@ -198,6 +198,8 @@ def main(args):
         seed=args.seed,
         max_steps=args.max_steps,
         tf32=args.use_tf32,
+        bf16=args.use_bf16,
+        bf16_full_eval=args.use_bf16,
         optim=OptimizerNames.ADAMW_8BIT if args.use_adam8bit else OptimizerNames.ADAMW_TORCH,
         dataloader_pin_memory=False if args.workers > 0 else True,
         batch_eval_metrics=True,
@@ -234,6 +236,7 @@ if __name__ == "__main__":
     parser.add_argument("-ms", "--max-steps", type=int, default=-1, help="Set to limit the number of total training steps.")
     parser.add_argument("-s", "--seed", type=int, default=42, help="Random seed for training.")
     parser.add_argument("-tf32", "--use-tf32", action="store_true", default=False, help="Set to True if your setup supports TF32 dtype.")
+    parser.add_argument("-bf16", "--use-bf16", action="store_true", default=False, help="Set to True if your setup supports BF16 dtype.")
     parser.add_argument("-bnb", "--use-adam8bit", action="store_true", default=False, help="Use ADAMW_8BIT optimizer (linux only).")
     parser.add_argument("-c", "--checkpoint", type=str, default=None, help="Path to checkpoint to resume training.")
     parser.add_argument("-rwb", "--resume-wandb", type=str, default=None, help="ID of run to resume")
