@@ -203,6 +203,7 @@ def main(args):
         optim=OptimizerNames.ADAMW_8BIT if args.use_adam8bit else OptimizerNames.ADAMW_TORCH,
         dataloader_pin_memory=False if args.workers > 0 else True,
         batch_eval_metrics=True,
+        log_outputs=True,
     )
 
     trainer = Trainer(

@@ -36,7 +36,6 @@ class DillCLIPTrainDataset(Dataset):
         self.frames = self._get_frames()
 
     def _get_frames(self):
-        # Search for images based on labels to prevent loading issues
         with open(self.data_directory, "r") as f:
             frames = f.read().splitlines()
 
@@ -46,8 +45,8 @@ class DillCLIPTrainDataset(Dataset):
         return len(self.frames)
 
     def __getitem__(self, idx: int):
-        lbl_path = self.frames[idx]
-        img_path = lbl_path.replace("clip_soft_labels", "images").replace(".npy", ".jpg")
+        img_path = self.frames[idx]
+        lbl_path = img_path.replace("images", "clip_soft_labels").replace(".jpg", ".npy")
         img = np.array(Image.open(img_path).convert("RGB"))
         lbl = np.load(lbl_path)
 

@@ -1,8 +1,12 @@
 import os
 
 from pathlib import Path
+from PIL import Image
 
-data_roots = ["D:/yfcc100m/data/", "E:/yfcc100m/data/"]
+data_roots = [
+    "D:/yfcc100m/data/",
+    # "E:/yfcc100m/data/",
+]
 output_dir = Path("./")
 
 
@@ -23,9 +27,17 @@ path_futures = set()
 for data_root in data_roots:
     labels_path = Path(data_root) / "clip_soft_labels"
     for wi in os.walk(labels_path):
-        paths.extend(return_paths(wi, "npy"))
+        npy_paths = return_paths(wi, "npy")
+        valid_paths = []
+        if len(npy_paths) > 0:
+            for npy_path in npy_paths:
+                img_path = str(npy_path).replace("clip_soft_labels", "images").replace(".npy", ".jpg")
+                try:
+                    im = Image.open(img_path).convert("RGB")
+                    valid_paths.append(img_path)
+                except Exception as e:
+                    print(f"Invalid image path: {img_path} \n With error:\n {e}")
+
+        paths.extend(valid_paths)
         if len(paths) > 1000:
             paths = dump_paths(paths)
-
-with open(output_dir / "train_labels.txt", "w") as f:
-    f.writelines(list(paths))

@@ -18,7 +18,9 @@ model = CLIPVisionModel.from_pretrained("openai/clip-vit-large-patch14").to(devi
 processor = CLIPImageProcessor.from_pretrained("openai/clip-vit-large-patch14")
 
 upr_dirs = list(img_folder.glob("2*"))
-for upr_dir in tqdm(upr_dirs):
+for i, upr_dir in enumerate(tqdm(upr_dirs)):
+    if i < 135:
+        continue
     # if upr_dir.stem.startswith("105"):
     #     continue
     # try:
@@ -32,7 +34,7 @@ for upr_dir in tqdm(upr_dirs):
             if out_filename.exists() and not OVERWRITE:
                 continue
             try:
-                image = Image.open(img_path)
+                image = np.array(Image.open(img_path).convert("RGB"))
                 inputs = processor(images=image, return_tensors="pt", padding=True)
                 inputs["pixel_values"] = inputs.pop("pixel_values").to(device)
                 outputs = model(**inputs, output_hidden_states=True)
