@@ -1,3 +1,4 @@
+import random
 from pathlib import Path
 
 import numpy as np
@@ -6,9 +7,9 @@ from torch.utils.data import Dataset
 
 
 class DillCLIPValDataset(Dataset):
-    def __init__(self, data_root: str):
+    def __init__(self, data_root: str, max_frames=5000):
         self.data_root = Path(data_root) / "val" if not data_root.endswith("val") else Path(data_root)
-        self.frames = self._get_frames()
+        self.frames = self._get_frames()[:max_frames]
         with open(self.data_root / "ILSVRC2012_validation_ground_truth.txt", "r") as f:
             targets = f.read().splitlines()
             self.targets = {i + 1: int(t) for i, t in enumerate(targets)}
