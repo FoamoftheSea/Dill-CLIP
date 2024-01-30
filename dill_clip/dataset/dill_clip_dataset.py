@@ -46,9 +46,13 @@ class DillCLIPTrainDataset(Dataset):
         return len(self.frames)
 
     def __getitem__(self, idx: int):
-        img_path = self.frames[idx]
-        lbl_path = img_path.replace("images", "clip_soft_labels").replace(".jpg", ".npy")
-        img = np.array(Image.open(img_path).convert("RGB"))
-        lbl = np.load(lbl_path)
+        try:
+            img_path = self.frames[idx]
+            lbl_path = img_path.replace("images", "clip_soft_labels").replace(".jpg", ".npy")
+            img = np.array(Image.open(img_path).convert("RGB"))
+            lbl = np.load(lbl_path)
+            return {"pixel_values": img, "labels": lbl}
 
-        return {"pixel_values": img, "labels": lbl}
+        except Exception as e:
+            print(f"Error loading frame: {img_path} \nWith error: {e}")
+            return self.__getitem__(random.choice(list(range(len(self)))))
