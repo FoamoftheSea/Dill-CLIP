@@ -92,9 +92,9 @@ def compute_metrics(eval_pred, compute_result=True) -> dict:
 
     with torch.no_grad():
         outputs, labels = eval_pred
-        target = outputs[0]
-        pred = outputs[1]
-        pooled = outputs[2]
+        target = outputs[1]
+        pred = outputs[2]
+        pooled = outputs[3]
         dill_metric.update(pred, pooled, labels, target)
 
     if compute_result:
