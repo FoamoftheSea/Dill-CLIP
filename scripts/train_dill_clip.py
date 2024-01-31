@@ -174,10 +174,11 @@ def main(args):
         params=model.parameters(),
         lr=args.learning_rate,
     )
-    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer=optimizer,
-        T_max=(len(train_dataset)//(args.gradient_accumulation_steps*args.batch_size))*args.epochs,
-    )
+    lr_scheduler = torch.optim.lr_scheduler.ConstantLR(optimizer=optimizer, factor=1.0, total_iters=0)
+    # lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    #     optimizer=optimizer,
+    #     T_max=(len(train_dataset)//(args.gradient_accumulation_steps*args.batch_size))*args.epochs,
+    # )
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         learning_rate=args.learning_rate,
@@ -230,7 +231,7 @@ if __name__ == "__main__":
     parser.add_argument("-e", "--epochs", type=int, default=1, help="Number of epochs to run training.")
     parser.add_argument("-bs", "--batch-size", type=int, default=1, help="Train batch size.")
     parser.add_argument("-ebs", "--eval-batch-size", type=int, default=None, help="Eval batch size. Defaults to train batch size.")
-    parser.add_argument("-gas", "--gradient-accumulation-steps", type=int, default=2, help="Number of gradient accumulation steps.")
+    parser.add_argument("-gas", "--gradient-accumulation-steps", type=int, default=32, help="Number of gradient accumulation steps.")
     parser.add_argument("-gc", "--gradient-checkpointing", action="store_true", default=False, help="Use gradient checkpointing.")
     parser.add_argument("-es", "--eval-steps", type=int, default=5000, help="Number of steps between validation runs.")
     parser.add_argument("-ss", "--save-steps", type=int, default=None, help="Number of steps between checkpoints. Defaults to eval steps.")
