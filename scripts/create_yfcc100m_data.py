@@ -17,9 +17,11 @@ out_folder = Path(str(img_folder).replace("images", "clip_soft_labels"))
 model = CLIPVisionModel.from_pretrained("openai/clip-vit-large-patch14").to(device)
 processor = CLIPImageProcessor.from_pretrained("openai/clip-vit-large-patch14")
 
+new_frames = []
+
 upr_dirs = list(img_folder.glob("2*"))
 for i, upr_dir in enumerate(tqdm(upr_dirs)):
-    if i < 135:
+    if i < 136:
         continue
     # if upr_dir.stem.startswith("105"):
     #     continue
@@ -40,5 +42,11 @@ for i, upr_dir in enumerate(tqdm(upr_dirs)):
                 outputs = model(**inputs, output_hidden_states=True)
                 target = outputs.hidden_states[VISION_FEATURE_LAYER][0].cpu().detach().numpy()
                 np.save(out_filename, target)
+                new_frames.append(img_path)
             except:
                 print("Skipping", img_path)
+
+    if len(new_frames) > 0:
+        with open("new_frames.txt", "a") as f:
+            f.writelines([str(p) + "\n" for p in new_frames])
+        new_frames = []
