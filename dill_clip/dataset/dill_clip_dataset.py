@@ -75,9 +75,10 @@ class DillCLIPLocalValDataset(Dataset):
 
 class DillCLIPLocalTrainDataset(Dataset):
 
-    def __init__(self, data_directory: str = "train_directory.txt"):
+    def __init__(self, data_directory: str = "train_directory.txt", wsl_paths=False):
         self.data_directory = data_directory
         self.frames = self._get_frames()
+        self.wsl_paths = wsl_paths
 
     def _get_frames(self):
         with open(self.data_directory, "r") as f:
@@ -90,8 +91,10 @@ class DillCLIPLocalTrainDataset(Dataset):
 
     def __getitem__(self, idx: int):
         try:
-            # img_path = self.frames[idx]
-            img_path = self.frames[idx].replace("D:", "/mnt/d").replace("\\", "/")
+            if not self.wsl_paths:
+                img_path = self.frames[idx]
+            else:
+                img_path = self.frames[idx].replace("D:", "/mnt/d").replace("\\", "/")
             lbl_path = img_path.replace("images", "clip_soft_labels").replace(".jpg", ".npy")
             img = np.array(Image.open(img_path).convert("RGB"))
             lbl = np.load(lbl_path)

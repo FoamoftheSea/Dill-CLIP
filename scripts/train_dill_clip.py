@@ -206,8 +206,9 @@ def main(args):
 
     # train_dataset = DillCLIPTrainDataset()
     # val_dataset = DillCLIPValDataset(num_workers=args.workers)
-    train_dataset = DillCLIPLocalTrainDataset()
-    val_dataset = DillCLIPLocalValDataset(data_root="/mnt/d/ILSVRC/Data/CLS-LOC/")
+    train_dataset = DillCLIPLocalTrainDataset(wsl_paths=args.wsl)
+    val_data_prefix = "/mnt/d" if args.wsl else "D:"
+    val_dataset = DillCLIPLocalValDataset(data_root=f"{val_data_prefix}/ILSVRC/Data/CLS-LOC/")
 
     # optimizer = torch.optim.AdamW(
     #     params=model.parameters(),
@@ -266,8 +267,8 @@ def main(args):
         dataloader_pin_memory=False if args.workers > 0 else True,
         batch_eval_metrics=True,
         log_outputs=True,
-        torch_compile=True,
-        torch_compile_backend="inductor",
+        torch_compile=args.torch_compile,
+        torch_compile_backend="inductor" if args.torch_compile else None,
     )
 
     trainer = Trainer(
@@ -307,6 +308,8 @@ if __name__ == "__main__":
     parser.add_argument("-rwb", "--resume-wandb", type=str, default=None, help="ID of run to resume")
     parser.add_argument("-eval", "--eval-only", action="store_true", default=False, help="Only run evaluation step.")
     parser.add_argument("-stl", "--save-total-limit", type=int, default=None, help="Maximum number of checkpoints to store at once.")
+    parser.add_argument("-compile", "--torch-compile", action="store_true", default=False, help="Use torch.compile for speed.")
+    parser.add_argument("-wsl", "--wsl", action="store_true", default=False, help="Change file paths to WSL format.")
 
     args = parser.parse_args()
     if args.eval_batch_size is None:
