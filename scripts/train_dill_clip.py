@@ -14,17 +14,27 @@ from transformers import (
     DeformableDetrImageProcessor,
     DillCLIPVisionConfig,
     DillCLIPVisionModelForRegression,
+    CLIPImageProcessor,
 )
 from transformers.data.data_collator import InputDataClass
 from transformers.training_args import OptimizerNames
 from transformers.utils import logging
+from transformers.utils.constants import OPENAI_CLIP_MEAN, OPENAI_CLIP_STD
 
 logger = logging.get_logger(__name__)
 logger.setLevel(logging.DEBUG)
 
-image_processor = DeformableDetrImageProcessor.from_pretrained("sensetime/deformable-detr")
-clip_vision_model = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-large-patch14").to("cuda:0")
-zeroshot_weights = torch.tensor(np.load("C:/Users/Nate/Dill-CLIP/scripts/zeroshot_weights.npy").T).to("cuda:0")
+# image_processor = DeformableDetrImageProcessor.from_pretrained(
+#     "sensetime/deformable-detr",
+#     image_mean=OPENAI_CLIP_MEAN,
+#     image_std=OPENAI_CLIP_STD
+# )
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+image_processor = CLIPImageProcessor.from_pretrained("openai/clip-vit-large-patch14")
+clip_vision_model = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-large-patch14").to(device)
+clip_vision_model.eval()
+zeroshot_weights = torch.tensor(np.load("C:/Users/indez/Dill-CLIP/scripts/zeroshot_weights.npy").T).to(device)
+target_clip_layer = -2
 
 
 def accuracy(output, target, topk=(1,)):
@@ -109,13 +119,14 @@ def dill_clip_collator(features: List[InputDataClass]) -> Dict[str, Any]:
     batch = {}
 
     for k, v in first.items():
-        if k == "labels":
-            batch[k] = [torch.tensor(f[k]) for f in features]
-        elif k == "pixel_values":
-            processed = image_processor([f[k] for f in features], return_tensors="pt")
+        if k == "pixel_values":
+            processed = image_processor([f[k] for f in features], return_tensors="pt", padding=True)
             pixel_values = processed.data["pixel_values"]
+            with torch.no_grad():
+                outputs = clip_vision_model(pixel_values=pixel_values.to(device), output_hidden_states=True)
+                batch["labels"] = [hs.cpu() for hs in outputs.hidden_states[target_clip_layer]]
             batch["pixel_values"] = pixel_values
-            batch["pixel_mask"] = processed.data["pixel_mask"]
+            batch["pixel_mask"] = processed.data.get("pixel_mask", None)
         elif k == "targets":
             batch["targets"] = torch.tensor(np.array([f[k] for f in features]))
 
@@ -167,13 +178,35 @@ def main(args):
 
     model = DillCLIPVisionModelForRegression(config)
 
-    train_dataset = DillCLIPTrainDataset(data_directory="C:/Users/Nate/Dill-CLIP/train_directory.txt")
+    train_dataset = DillCLIPTrainDataset()
     val_dataset = DillCLIPValDataset(data_root="D:/ILSVRC/Data/CLS-LOC")
 
-    optimizer = torch.optim.AdamW(
-        params=model.parameters(),
-        lr=args.learning_rate,
-    )
+    # optimizer = torch.optim.AdamW(
+    #     params=model.parameters(),
+    #     lr=args.learning_rate,
+    # )
+
+    params = [
+        {"params": model.model.backbone.parameters(), "lr": args.learning_rate * 5},
+        {"params": model.model.encoder.parameters()},
+        {"params": model.model.decoder.parameters()},
+        {"params": model.model.input_proj.parameters()},
+        {"params": model.model.level_embed},
+        {"params": model.model.query_position_embeddings.parameters()},
+        {"params": model.model.reference_points.parameters()},
+    ]
+    if args.use_adam8bit:
+        import bitsandbytes as bnb
+        optimizer = bnb.optim.Adam8bit(
+            params=params,
+            lr=args.learning_rate,
+        )
+    else:
+        optimizer = torch.optim.AdamW(
+            params=params,
+            lr=args.learning_rate,
+        )
+
     lr_scheduler = torch.optim.lr_scheduler.ConstantLR(optimizer=optimizer, factor=1.0, total_iters=0)
     # lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
     #     optimizer=optimizer,
@@ -227,7 +260,7 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--output_dir", type=str, default="./dill_clip_b0_output", help="Output dir to store results.")
     parser.add_argument("-d", "--data-root", nargs="*", type=str, default=["D:/", "E:/"], help="Folder containing dataset.")
     parser.add_argument("-w", "--workers", type=int, default=0, help="Number of data loader workers.")
-    parser.add_argument("-lr", "--learning-rate", type=float, default=0.0001, help="Initial learning rate for training.")
+    parser.add_argument("-lr", "--learning-rate", type=float, default=0.0002, help="Initial learning rate for training.")
     parser.add_argument("-e", "--epochs", type=int, default=1, help="Number of epochs to run training.")
     parser.add_argument("-bs", "--batch-size", type=int, default=1, help="Train batch size.")
     parser.add_argument("-ebs", "--eval-batch-size", type=int, default=None, help="Eval batch size. Defaults to train batch size.")
