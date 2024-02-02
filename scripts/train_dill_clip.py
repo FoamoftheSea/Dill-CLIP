@@ -5,7 +5,12 @@ from typing import Mapping, List, Dict, Any
 import numpy as np
 import torch
 import wandb
-from dill_clip.dataset.dill_clip_dataset import DillCLIPTrainDataset, DillCLIPValDataset
+from dill_clip.dataset.dill_clip_dataset import (
+    DillCLIPTrainDataset,
+    DillCLIPValDataset,
+    DillCLIPLocalTrainDataset,
+    DillCLIPLocalValDataset,
+)
 from transformers import (
     CLIPVisionModelWithProjection,
     Trainer,
@@ -33,7 +38,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 image_processor = CLIPImageProcessor.from_pretrained("openai/clip-vit-large-patch14")
 clip_vision_model = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-large-patch14").to(device)
 clip_vision_model.eval()
-zeroshot_weights = torch.tensor(np.load("C:/Users/indez/Dill-CLIP/scripts/zeroshot_weights.npy").T).to(device)
+zeroshot_weights = torch.tensor(np.load("./scripts/zeroshot_weights.npy").T).to(device)
 target_clip_layer = -2
 
 
@@ -111,7 +116,7 @@ def compute_metrics(eval_pred, compute_result=True) -> dict:
         return dill_metric.calculate()
 
 
-def dill_clip_collator(features: List[InputDataClass]) -> Dict[str, Any]:
+def dill_clip_online_collator(features: List[InputDataClass]) -> Dict[str, Any]:
 
     if not isinstance(features[0], Mapping):
         features = [vars(f) for f in features]
@@ -125,6 +130,27 @@ def dill_clip_collator(features: List[InputDataClass]) -> Dict[str, Any]:
             with torch.no_grad():
                 outputs = clip_vision_model(pixel_values=pixel_values.to(device), output_hidden_states=True)
                 batch["labels"] = [hs.cpu() for hs in outputs.hidden_states[target_clip_layer]]
+            batch["pixel_values"] = pixel_values
+            batch["pixel_mask"] = processed.data.get("pixel_mask", None)
+        elif k == "targets":
+            batch["targets"] = torch.tensor(np.array([f[k] for f in features]))
+
+    return batch
+
+
+def dill_clip_collator(features: List[InputDataClass]) -> Dict[str, Any]:
+
+    if not isinstance(features[0], Mapping):
+        features = [vars(f) for f in features]
+    first = features[0]
+    batch = {}
+
+    for k, v in first.items():
+        if k == "labels":
+            batch[k] = [torch.tensor(f[k]) for f in features]
+        elif k == "pixel_values":
+            processed = image_processor([f[k] for f in features], return_tensors="pt")
+            pixel_values = processed.data["pixel_values"]
             batch["pixel_values"] = pixel_values
             batch["pixel_mask"] = processed.data.get("pixel_mask", None)
         elif k == "targets":
@@ -173,13 +199,15 @@ def main(args):
         encoder_n_points=4,
         decoder_n_points=4,
         two_stage=False,
-        disable_custom_kernels=False,
+        disable_custom_kernels=True,
     )
 
     model = DillCLIPVisionModelForRegression(config)
 
-    train_dataset = DillCLIPTrainDataset()
-    val_dataset = DillCLIPValDataset(data_root="D:/ILSVRC/Data/CLS-LOC")
+    # train_dataset = DillCLIPTrainDataset()
+    # val_dataset = DillCLIPValDataset(num_workers=args.workers)
+    train_dataset = DillCLIPLocalTrainDataset()
+    val_dataset = DillCLIPLocalValDataset(data_root="/mnt/d/ILSVRC/Data/CLS-LOC/")
 
     # optimizer = torch.optim.AdamW(
     #     params=model.parameters(),
@@ -238,6 +266,8 @@ def main(args):
         dataloader_pin_memory=False if args.workers > 0 else True,
         batch_eval_metrics=True,
         log_outputs=True,
+        torch_compile=True,
+        torch_compile_backend="inductor",
     )
 
     trainer = Trainer(
