@@ -79,7 +79,6 @@ class DillCLIPEvalMetric:
     def update(self, pred, pooled, labels, target):
         mse_loss = torch.nn.MSELoss()
         mae_loss = torch.nn.L1Loss()
-        labels = torch.stack(labels)
         self.batch_mse.append(mse_loss(pred, labels).detach().cpu().numpy())
         self.batch_mae.append(mae_loss(pred, labels).detach().cpu().numpy())
 
@@ -129,7 +128,7 @@ def dill_clip_online_collator(features: List[InputDataClass]) -> Dict[str, Any]:
             pixel_values = processed.data["pixel_values"]
             with torch.no_grad():
                 outputs = clip_vision_model(pixel_values=pixel_values.to(device), output_hidden_states=True)
-                batch["labels"] = [hs.cpu() for hs in outputs.hidden_states[target_clip_layer]]
+                batch["labels"] = torch.stack([hs.cpu() for hs in outputs.hidden_states[target_clip_layer]])
             batch["pixel_values"] = pixel_values
             batch["pixel_mask"] = processed.data.get("pixel_mask", None)
         elif k == "targets":
@@ -147,7 +146,7 @@ def dill_clip_collator(features: List[InputDataClass]) -> Dict[str, Any]:
 
     for k, v in first.items():
         if k == "labels":
-            batch[k] = [torch.tensor(f[k]) for f in features]
+            batch[k] = torch.stack([torch.tensor(f[k]) for f in features])
         elif k == "pixel_values":
             processed = image_processor([f[k] for f in features], return_tensors="pt")
             pixel_values = processed.data["pixel_values"]
