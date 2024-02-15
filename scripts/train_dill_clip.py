@@ -159,49 +159,57 @@ def dill_clip_collator(features: List[InputDataClass]) -> Dict[str, Any]:
 
 
 def main(args):
-    config = DillCLIPVisionConfig(
-        use_timm_backbone=False,
-        backbone_config=PvtV2Config(
-            depths=[2, 2, 2, 2],
-            hidden_sizes=[32, 64, 160, 256],
-            # hidden_sizes=[64, 128, 320, 512],
-            mlp_ratios=[8, 8, 4, 4],
-            num_attention_heads=[1, 2, 5, 8],
-            num_encoder_blocks=4,
-            patch_sizes=[7, 3, 3, 3],
-            sr_ratios=[8, 4, 2, 1],
-            strides=[4, 2, 2, 2],
-            drop_path_rate=0.1,
-        ),
-        num_queries=257,
-        max_position_embeddings=1024,
-        encoder_layers=3,
-        encoder_ffn_dim=1024,
-        encoder_attention_heads=32,
-        decoder_layers=3,
-        decoder_ffn_dim=1024,
-        decoder_attention_heads=32,
-        encoder_layerdrop=0.0,
-        is_encoder_decoder=True,
-        activation_function="relu",
-        d_model=1024,
-        dropout=0.1,
-        attention_dropout=0.0,
-        activation_dropout=0.0,
-        init_std=0.02,
-        init_xavier_std=1.0,
-        return_intermediate=True,
-        auxiliary_loss=False,
-        position_embedding_type="sine",
-        dilation=False,
-        num_feature_levels=4,
-        encoder_n_points=4,
-        decoder_n_points=4,
-        two_stage=False,
-        disable_custom_kernels=True,
-    )
 
-    model = DillCLIPVisionModelForRegression(config)
+    if args.checkpoint is not None:
+        model = DillCLIPVisionModelForRegression.from_pretrained(args.checkpoint)
+    else:
+        config = DillCLIPVisionConfig(
+            use_timm_backbone=False,
+            use_pretrained_backbone=False,
+            backbone=None,
+            backbone_config=PvtV2Config(
+                depths=[2, 2, 2, 2],
+                # depths=[3, 4, 18, 3],
+                hidden_sizes=[32, 64, 160, 256],
+                # hidden_sizes=[64, 128, 320, 512],
+                mlp_ratios=[8, 8, 4, 4],
+                num_attention_heads=[1, 2, 5, 8],
+                num_encoder_blocks=4,
+                patch_sizes=[7, 3, 3, 3],
+                sr_ratios=[8, 4, 2, 1],
+                strides=[4, 2, 2, 2],
+                drop_path_rate=0.1,
+                linear_attention=True,
+            ),
+            num_queries=257,
+            max_position_embeddings=1024,
+            encoder_layers=3,
+            encoder_ffn_dim=1024,
+            encoder_attention_heads=32,
+            decoder_layers=6,
+            decoder_ffn_dim=1024,
+            decoder_attention_heads=32,
+            encoder_layerdrop=0.0,
+            is_encoder_decoder=True,
+            activation_function="relu",
+            d_model=1024,
+            dropout=0.1,
+            attention_dropout=0.0,
+            activation_dropout=0.0,
+            init_std=0.02,
+            init_xavier_std=1.0,
+            return_intermediate=True,
+            auxiliary_loss=False,
+            position_embedding_type="sine",
+            dilation=False,
+            num_feature_levels=4,
+            encoder_n_points=4,
+            decoder_n_points=4,
+            two_stage=False,
+            disable_custom_kernels=True,
+        )
+
+        model = DillCLIPVisionModelForRegression(config)
 
     # train_dataset = DillCLIPTrainDataset()
     # val_dataset = DillCLIPValDataset(num_workers=args.workers)
@@ -282,7 +290,7 @@ def main(args):
     if args.eval_only:
         trainer.evaluate()
     else:
-        trainer.train()
+        trainer.train(resume_from_checkpoint=args.checkpoint if args.trainer_resume else None)
 
 
 if __name__ == "__main__":
@@ -296,7 +304,7 @@ if __name__ == "__main__":
     parser.add_argument("-ebs", "--eval-batch-size", type=int, default=None, help="Eval batch size. Defaults to train batch size.")
     parser.add_argument("-gas", "--gradient-accumulation-steps", type=int, default=32, help="Number of gradient accumulation steps.")
     parser.add_argument("-gc", "--gradient-checkpointing", action="store_true", default=False, help="Use gradient checkpointing.")
-    parser.add_argument("-es", "--eval-steps", type=int, default=5000, help="Number of steps between validation runs.")
+    parser.add_argument("-es", "--eval-steps", type=int, default=1000, help="Number of steps between validation runs.")
     parser.add_argument("-ss", "--save-steps", type=int, default=None, help="Number of steps between checkpoints. Defaults to eval steps.")
     parser.add_argument("-ms", "--max-steps", type=int, default=-1, help="Set to limit the number of total training steps.")
     parser.add_argument("-s", "--seed", type=int, default=42, help="Random seed for training.")
@@ -305,6 +313,7 @@ if __name__ == "__main__":
     parser.add_argument("-bnb", "--use-adam8bit", action="store_true", default=False, help="Use ADAMW_8BIT optimizer (linux only).")
     parser.add_argument("-c", "--checkpoint", type=str, default=None, help="Path to checkpoint to resume training.")
     parser.add_argument("-rwb", "--resume-wandb", type=str, default=None, help="ID of run to resume")
+    parser.add_argument("-tr", "--trainer_resume", action="store_true", default=False, help="Whether to resume trainer state with checkpoint load.")
     parser.add_argument("-eval", "--eval-only", action="store_true", default=False, help="Only run evaluation step.")
     parser.add_argument("-stl", "--save-total-limit", type=int, default=None, help="Maximum number of checkpoints to store at once.")
     parser.add_argument("-compile", "--torch-compile", action="store_true", default=False, help="Use torch.compile for speed.")
