@@ -284,7 +284,7 @@ def main(args):
         batch_eval_metrics=True,
         log_outputs=True,
         torch_compile=args.torch_compile,
-        torch_compile_backend="inductor" if args.torch_compile else None,
+        torch_compile_backend=args.torch_compile,
     )
 
     trainer = Trainer(
@@ -325,7 +325,7 @@ if __name__ == "__main__":
     parser.add_argument("-tr", "--trainer_resume", action="store_true", default=False, help="Whether to resume trainer state with checkpoint load.")
     parser.add_argument("-eval", "--eval-only", action="store_true", default=False, help="Only run evaluation step.")
     parser.add_argument("-stl", "--save-total-limit", type=int, default=None, help="Maximum number of checkpoints to store at once.")
-    parser.add_argument("-compile", "--torch-compile", action="store_true", default=False, help="Use torch.compile for speed.")
+    parser.add_argument("-compile", "--torch-compile", type=str, default=None, help="Use torch.compile backend for speedup.")
     parser.add_argument("-wsl", "--wsl", action="store_true", default=False, help="Change file paths to WSL format.")
 
     args = parser.parse_args()
