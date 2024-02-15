@@ -222,24 +222,24 @@ def main(args):
     #     lr=args.learning_rate,
     # )
 
-    params = [
-        {"params": model.model.backbone.parameters(), "lr": args.learning_rate * 5},
-        {"params": model.model.encoder.parameters()},
-        {"params": model.model.decoder.parameters()},
-        {"params": model.model.input_proj.parameters()},
-        {"params": model.model.level_embed},
-        {"params": model.model.query_position_embeddings.parameters()},
-        {"params": model.model.reference_points.parameters()},
-    ]
+    # params = [
+    #     {"params": model.model.backbone.parameters(), "lr": args.learning_rate * 5},
+    #     {"params": model.model.encoder.parameters()},
+    #     {"params": model.model.decoder.parameters()},
+    #     {"params": model.model.input_proj.parameters()},
+    #     {"params": model.model.level_embed},
+    #     {"params": model.model.query_position_embeddings.parameters()},
+    #     {"params": model.model.reference_points.parameters()},
+    # ]
     if args.use_adam8bit:
         import bitsandbytes as bnb
         optimizer = bnb.optim.Adam8bit(
-            params=params,
+            params=model.parameters(),
             lr=args.learning_rate,
         )
     else:
         optimizer = torch.optim.AdamW(
-            params=params,
+            params=model.parameters(),
             lr=args.learning_rate,
         )
 
