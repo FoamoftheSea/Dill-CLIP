@@ -243,11 +243,20 @@ def main(args):
             lr=args.learning_rate,
         )
 
-    lr_scheduler = torch.optim.lr_scheduler.ConstantLR(optimizer=optimizer, factor=1.0, total_iters=0)
-    # lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    # num_steps = int(len(train_dataset) * args.epochs / (args.batch_size * args.gradient_accumulation_steps))
+    # lr_scheduler = torch.optim.lr_scheduler.ConstantLR(optimizer=optimizer, factor=1.0, total_iters=0)
+    # lrs = [param["lr"] for param in optimizer.param_groups]
+    # lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
     #     optimizer=optimizer,
-    #     T_max=(len(train_dataset)//(args.gradient_accumulation_steps*args.batch_size))*args.epochs,
+    #     max_lr=lrs,
+    #     steps_per_epoch=len(train_dataset)//(args.gradient_accumulation_steps*args.batch_size),
+    #     epochs=args.epochs,
+    #     pct_start=6000/num_steps,
     # )
+    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer=optimizer,
+        T_max=(len(train_dataset)//(args.gradient_accumulation_steps*args.batch_size))*args.epochs,
+    )
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         learning_rate=args.learning_rate,
